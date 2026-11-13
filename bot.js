@@ -5,6 +5,7 @@ import Anthropic, { toFile as toClaudeFile } from '@anthropic-ai/sdk';
 import OpenAI, { toFile as toOpenAIFile } from 'openai';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { ProxyAgent } from 'undici';
+import { initTroon, TROON_TOOLS, runTroonTool, closeBrowser } from './troon.js';
 
 const { BOT_TOKEN, CLAUDE_API_KEY, OPENAI_API_KEY } = process.env;
 if (!BOT_TOKEN || !CLAUDE_API_KEY) {
@@ -26,6 +27,16 @@ const SYSTEM_PROMPT =
   'Telegram показывает ответ как обычный текст, поэтому не используй Markdown-разметку (звёздочки, решётки, таблицы): ' +
   'для списков используй простые строки с тире или цифрами.';
 
+const TROON_PROMPT =
+  'Ты умеешь искать свободное время для игры в гольф (tee time) на полях сети Troon (сайт golfwithaccess.com, ' +
+  'приложение Access by Troon) — инструменты search_tee_times и find_troon_courses. Поля в основном в США. ' +
+  'Когда пользователь хочет поиграть или забронировать гольф, сам переведи «завтра», «в субботу» и т. п. в дату, ' +
+  'а «утром», «около 9» — в окно времени (около 9 = 08:00–10:00). Если назван город, передай его координаты (lat/lng), ' +
+  'чтобы найти ближайшие поля. Если город или число игроков неясны — спроси коротко (по умолчанию 2 игрока). ' +
+  'В ответе перечисли поля от ближайшего: название, город, расстояние, подходящее время с ценой и ссылку booking_url ' +
+  '(по ней открывается страница с этой датой, там выбирают время и оплачивают картой или баллами Access). ' +
+  'Сам бот бронировать и оплачивать не умеет — честно скажи об этом, если попросят, и дай ссылку.';
+
 // Если задан HTTPS-прокси (например, в облачном окружении) — ходим через него
 const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
 const dispatcher = proxy ? new ProxyAgent(proxy) : undefined;
@@ -42,6 +53,7 @@ const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY, ...fetchOpt
 const DATA_DIR = path.join(path.dirname(new URL(import.meta.url).pathname), 'data');
 const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
 fs.mkdirSync(DATA_DIR, { recursive: true });
+initTroon({ fetchImpl: httpFetch, dataDir: DATA_DIR });
 const histories = new Map(
   fs.existsSync(HISTORY_FILE) ? Object.entries(JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'))) : [],
 );
@@ -65,27 +77,49 @@ async function askClaude(chatId, content) {
   const messages = histories.get(key) || [];
   // История только дополняется (так требует сохранение рассуждений модели между ходами)
   const request = [...messages, { role: 'user', content }];
+  const today = new Date().toISOString().slice(0, 10);
+  const system = `${SYSTEM_PROMPT}\n\n${TROON_PROMPT}\nСегодня ${today} (UTC).`;
 
-  const response = await claude.beta.messages.create({
-    model: CLAUDE_MODEL,
-    max_tokens: 16000,
-    system: SYSTEM_PROMPT,
-    messages: request,
-    output_config: { effort: 'low' },
-    cache_control: { type: 'ephemeral' },
-    // Длинные диалоги автоматически сжимаются на стороне Claude, контекст не теряется
-    context_management: { edits: [{ type: 'compact_20260112' }] },
-    // Если модель откажется по соображениям безопасности, запрос повторит рекомендованная запасная модель
-    fallbacks: 'default',
-    betas: ['compact-2026-01-12', 'server-side-fallback-2026-07-01'],
-  });
+  let response;
+  // Цикл инструментов: Claude может несколько раз вызвать поиск tee time, прежде чем ответить
+  for (let step = 0; step < 6; step++) {
+    response = await claude.beta.messages.create({
+      model: CLAUDE_MODEL,
+      max_tokens: 16000,
+      system,
+      messages: request,
+      tools: TROON_TOOLS,
+      output_config: { effort: 'low' },
+      cache_control: { type: 'ephemeral' },
+      // Длинные диалоги автоматически сжимаются на стороне Claude, контекст не теряется
+      context_management: { edits: [{ type: 'compact_20260112' }] },
+      // Если модель откажется по соображениям безопасности, запрос повторит рекомендованная запасная модель
+      fallbacks: 'default',
+      betas: ['compact-2026-01-12', 'server-side-fallback-2026-07-01'],
+    });
 
-  if (response.stop_reason === 'refusal') {
-    // Отказ не сохраняем в историю, чтобы он не мешал следующим вопросам
-    return 'Извините, на этот запрос я ответить не могу. Попробуйте переформулировать.';
+    if (response.stop_reason === 'refusal') {
+      // Отказ не сохраняем в историю, чтобы он не мешал следующим вопросам
+      return 'Извините, на этот запрос я ответить не могу. Попробуйте переформулировать.';
+    }
+
+    request.push({ role: 'assistant', content: response.content });
+    if (response.stop_reason !== 'tool_use') break;
+
+    const toolResults = [];
+    for (const block of response.content.filter((b) => b.type === 'tool_use')) {
+      let result;
+      try {
+        result = await runTroonTool(block.name, block.input);
+      } catch (err) {
+        console.error(`Инструмент ${block.name}:`, err);
+        result = { error: `Не удалось получить данные с сайта Troon: ${err.message}` };
+      }
+      toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
+    }
+    request.push({ role: 'user', content: toolResults });
   }
 
-  request.push({ role: 'assistant', content: response.content });
   histories.set(key, request);
   saveHistories();
 
@@ -179,7 +213,8 @@ bot.use(async (ctx, next) => {
 bot.command('start', (ctx) =>
   ctx.reply(
     'Привет! Я твой личный бот на Claude. Пиши вопросы, присылай голосовые, фото и документы (PDF, txt, csv и др.) — ' +
-      'я помню наш разговор. /new — начать новый диалог.',
+      'я помню наш разговор. Ещё ищу свободное время на гольф-полях Troon: например, «завтра утром в Скоттсдейле на двоих». ' +
+      '/new — начать новый диалог.',
   ),
 );
 bot.command('new', (ctx) => {
@@ -221,8 +256,8 @@ bot.on('message', (ctx) => ctx.reply('Я понимаю текст, голосо
 
 bot.catch((err) => console.error('Ошибка бота:', err));
 
-process.once('SIGINT', () => bot.stop());
-process.once('SIGTERM', () => bot.stop());
+process.once('SIGINT', () => { bot.stop(); closeBrowser(); });
+process.once('SIGTERM', () => { bot.stop(); closeBrowser(); });
 
 await bot.api.setMyCommands([
   { command: 'new', description: 'Начать новый диалог' },

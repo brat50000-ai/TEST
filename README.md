@@ -1,19 +1,23 @@
 # Telegram-бот с ИИ
 
-Бот на Node.js ([grammY](https://grammy.dev) + [OpenAI](https://developers.openai.com/api/docs)):
+Личный бот на Node.js ([grammY](https://grammy.dev)):
 
-- ведёт диалог с помощью модели **gpt-5.5** (Responses API);
-- помнит контекст беседы в каждом чате (через `previous_response_id`, ссылки хранятся в `sessions.json`);
-- понимает голосовые сообщения: расшифровывает их моделью **gpt-transcribe** и отвечает на текст.
+- ведёт диалог через **Claude Sonnet 5.5** (Claude API) и помнит разговор (история хранится в `data/history.json`,
+  длинные диалоги автоматически сжимаются на стороне Claude);
+- читает документы: PDF, картинки/фото, текстовые файлы (txt, csv, json, md, код и т. п.);
+- понимает голосовые: расшифровывает их моделью OpenAI **gpt-transcribe** и отвечает на текст;
+- отвечает только пользователям из `ALLOWED_USER_IDS`.
 
-Команды: `/start` — приветствие, `/new` — начать новый диалог (забыть контекст).
+Команды: `/start` — о боте, `/new` — начать новый диалог.
 
 ## Запуск
 
 1. Установите Node.js 22+ (проверено на v26.13.1).
 2. `npm install`
-3. Скопируйте `.env.example` в `.env` и впишите токен от @BotFather и ключ OpenAI API.
+3. Скопируйте `.env.example` в `.env` и заполните: токен от @BotFather, ключ Claude API, ключ OpenAI API,
+   свой Telegram ID (бот покажет его, если написать ему с чужого аккаунта).
 4. `npm start`
 
-Необязательные переменные: `OPENAI_MODEL` (по умолчанию `gpt-5.5`), `OPENAI_TRANSCRIBE_MODEL` (по умолчанию `gpt-transcribe`).
-Если задана `HTTPS_PROXY`, бот обращается к Telegram и OpenAI через этот прокси.
+Необязательные переменные: `CLAUDE_MODEL` (по умолчанию `claude-sonnet-5-5`),
+`OPENAI_TRANSCRIBE_MODEL` (по умолчанию `gpt-transcribe`).
+Если задана `HTTPS_PROXY`, бот обращается к Telegram, Claude и OpenAI через этот прокси.

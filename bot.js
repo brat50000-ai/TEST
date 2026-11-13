@@ -5,7 +5,7 @@ import Anthropic, { toFile as toClaudeFile } from '@anthropic-ai/sdk';
 import OpenAI, { toFile as toOpenAIFile } from 'openai';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { ProxyAgent } from 'undici';
-import { initTroon, TROON_TOOLS, runTroonTool, closeBrowser } from './troon.js';
+import { initTroon, getCatalog, TROON_TOOLS, runTroonTool, closeBrowser } from './troon.js';
 
 const { BOT_TOKEN, CLAUDE_API_KEY, OPENAI_API_KEY } = process.env;
 if (!BOT_TOKEN || !CLAUDE_API_KEY) {
@@ -54,6 +54,8 @@ const DATA_DIR = path.join(path.dirname(new URL(import.meta.url).pathname), 'dat
 const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 initTroon({ fetchImpl: httpFetch, dataDir: DATA_DIR });
+// Каталог полей Troon собираем заранее, чтобы первый запрос не ждал
+getCatalog().catch((err) => console.error('Troon: не удалось собрать каталог полей:', err.message));
 const histories = new Map(
   fs.existsSync(HISTORY_FILE) ? Object.entries(JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'))) : [],
 );

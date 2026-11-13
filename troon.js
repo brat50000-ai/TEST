@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 
-const BASE = 'https://golfwithaccess.com';
+const BASE = process.env.TROON_BASE_URL || 'https://golfwithaccess.com'; // переопределяется только для тестов
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
 const CATALOG_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
 
@@ -18,6 +18,7 @@ let catalogBuilding = null;
 
 export function initTroon({ fetchImpl, dataDir }) {
   if (fetchImpl) httpFetch = fetchImpl;
+  fs.mkdirSync(dataDir, { recursive: true });
   catalogFile = path.join(dataDir, 'troon-courses.json');
   if (fs.existsSync(catalogFile)) {
     try {

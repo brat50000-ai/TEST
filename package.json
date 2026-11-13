@@ -1,0 +1,17 @@
+{
+  "name": "telegram-bot",
+  "version": "1.0.0",
+  "description": "Простой Telegram-бот, отвечающий на любое сообщение",
+  "main": "bot.js",
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file=.env bot.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "grammy": "^1.46.0",
+    "https-proxy-agent": "^9.1.0"
+  }
+}

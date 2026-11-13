@@ -1,5 +1,0 @@
-
-> telegram-bot@1.0.0 start
-> node --env-file=.env bot.js
-
-Бот @Test5000000_bot запущен
